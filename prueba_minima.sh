@@ -1,4 +1,5 @@
 #!/bin/bash
+# === CONFIGURACIÓN ===
 CARPETA_BASE="/home/angel/Downloads"
 CARPETA_SALIDA="$(dirname "$0")/reportes"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
@@ -17,12 +18,13 @@ echo ""
 total_archivos=0
 total_peso=0
 
-# Recorre cada subcarpeta (incluyendo la raíz)
-while IFS= read -r -d '' carpeta; do
-  archivos=$(find "$carpeta" -maxdepth 1 -type f -print0 2>/dev/null)
-  count=$(echo "$archivos" | tr -cd '\0' | wc -c)
+# Recorre todas las carpetas (incluyendo la raíz)
+while IFS= read -r carpeta; do
+  # Contar archivos en esta carpeta
+  count=$(find "$carpeta" -maxdepth 1 -type f | wc -l)
   [ "$count" -eq 0 ] && continue
 
+  # Calcular peso total (en bytes)
   peso=$(find "$carpeta" -maxdepth 1 -type f -printf "%s\n" 2>/dev/null | awk '{sum+=$1} END {print sum}')
   peso_mb=$(echo "scale=2; $peso / 1048576" | bc)
 
@@ -33,12 +35,11 @@ while IFS= read -r -d '' carpeta; do
 
   total_archivos=$((total_archivos + count))
   total_peso=$(echo "$total_peso + $peso_mb" | bc)
-done < <(find "$CARPETA_BASE" -type d -print0)
+done < <(find "$CARPETA_BASE" -type d)
 
 echo ""
 echo "📊 Total archivos: $total_archivos"
 echo "📦 Peso total (MB): $total_peso"
-
 echo ""
 echo "✅ Reporte guardado en: $ARCHIVO_SALIDA"
 
