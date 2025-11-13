@@ -4,31 +4,27 @@
 # SCRIPT DE ANÁLISIS DE CARPETAS
 # ===============================
 
-# Configuración
 CARPETA_BASE="/home/angel/Downloads"
 CARPETA_SALIDA="$(dirname "$0")/reportes"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 ARCHIVO_SALIDA="$CARPETA_SALIDA/resumen_$TIMESTAMP.txt"
 
-# Colores para output
 RESET="\e[0m"
 CYAN="\e[36m"
 GREEN="\e[32m"
 YELLOW="\e[33m"
 
-# Crear carpeta de reportes si no existe
 mkdir -p "$CARPETA_SALIDA"
 
-# Variables globales
 declare -A carpetas_data
 declare -a carpetas_orden
 total_carpetas=0
 total_archivos_global=0
 total_peso_global=0
 
-# ====================================
-# Función para mostrar spinner animado
-# ====================================
+# ==============================
+# Spinner visual
+# ==============================
 spinner() {
     local pid=$1
     local delay=0.1
@@ -45,63 +41,74 @@ spinner() {
     echo -e "${GREEN}✓${RESET} Análisis completado."
 }
 
-# ===========================
-# Función principal de análisis
-# ===========================
-analizar_carpetas() {
-    while IFS= read -r -d '' carpeta; do
-        # Contar archivos en esta carpeta (no recursivo)
-        num_archivos=$(find "$carpeta" -maxdepth 1 -type f 2>/dev/null | wc -l)
-        [ "$num_archivos" -eq 0 ] && continue
+# ==============================
+# Función de análisis
+# ==============================
+analizar_carpeta() {
+    local carpeta="$1"
 
-        nombre_carpeta=$(basename "$carpeta")
-        ruta_relativa="${carpeta#$CARPETA_BASE/}"
+    # Contar archivos directos (no recursivo)
+    num_archivos=$(find "$carpeta" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    [ "$num_archivos" -eq 0 ] && return  # si no hay archivos, no procesar
 
-        peso_total=0
-        declare -A tipos_archivo
+    local nombre_carpeta=$(basename "$carpeta")
+    local ruta_relativa="${carpeta#$CARPETA_BASE/}"
 
-        while IFS= read -r -d '' archivo; do
-            if [ -f "$archivo" ]; then
-                # Obtener tamaño compatible
-                if stat -c%s "$archivo" &>/dev/null; then
-                    peso=$(stat -c%s "$archivo")
-                else
-                    peso=$(stat -f%z "$archivo")
-                fi
+    local peso_total=0
+    declare -A tipos_archivo
 
-                peso_total=$((peso_total + peso))
-
-                extension="${archivo##*.}"
-                if [ "$extension" = "$archivo" ]; then
-                    extension="sin_extensión"
-                else
-                    extension=".${extension,,}"
-                fi
-                tipos_archivo[$extension]=$((${tipos_archivo[$extension]:-0} + 1))
+    while IFS= read -r -d '' archivo; do
+        if [ -f "$archivo" ]; then
+            if stat -c%s "$archivo" &>/dev/null; then
+                peso=$(stat -c%s "$archivo")
+            else
+                peso=$(stat -f%z "$archivo")
             fi
-        done < <(find "$carpeta" -maxdepth 1 -type f -print0 2>/dev/null)
+            peso_total=$((peso_total + peso))
 
-        peso_mb=$(echo "scale=2; $peso_total / 1048576" | bc)
+            extension="${archivo##*.}"
+            if [ "$extension" = "$archivo" ]; then
+                extension="sin_extensión"
+            else
+                extension=".${extension,,}"
+            fi
+            tipos_archivo[$extension]=$((${tipos_archivo[$extension]:-0} + 1))
+        fi
+    done < <(find "$carpeta" -maxdepth 1 -type f -print0 2>/dev/null)
 
-        carpetas_orden+=("$carpeta")
-        carpetas_data["$carpeta,nombre"]="$nombre_carpeta"
-        carpetas_data["$carpeta,ruta"]="$ruta_relativa"
-        carpetas_data["$carpeta,archivos"]="$num_archivos"
-        carpetas_data["$carpeta,peso"]="$peso_mb"
+    peso_mb=$(echo "scale=2; $peso_total / 1048576" | bc)
 
-        for ext in "${!tipos_archivo[@]}"; do
-            carpetas_data["$carpeta,tipo,$ext"]="${tipos_archivo[$ext]}"
-        done
+    carpetas_orden+=("$carpeta")
+    carpetas_data["$carpeta,nombre"]="$nombre_carpeta"
+    carpetas_data["$carpeta,ruta"]="$ruta_relativa"
+    carpetas_data["$carpeta,archivos"]="$num_archivos"
+    carpetas_data["$carpeta,peso"]="$peso_mb"
 
-        total_carpetas=$((total_carpetas + 1))
-        total_archivos_global=$((total_archivos_global + num_archivos))
-        total_peso_global=$(echo "$total_peso_global + $peso_mb" | bc)
-    done < <(find "$CARPETA_BASE" -type d -print0 2>/dev/null)
+    for ext in "${!tipos_archivo[@]}"; do
+        carpetas_data["$carpeta,tipo,$ext"]="${tipos_archivo[$ext]}"
+    done
+
+    total_carpetas=$((total_carpetas + 1))
+    total_archivos_global=$((total_archivos_global + num_archivos))
+    total_peso_global=$(echo "$total_peso_global + $peso_mb" | bc)
 }
 
-# ===========================
-# Generar y mostrar el reporte
-# ===========================
+# ==============================
+# Función principal (recorrido)
+# ==============================
+analizar_carpetas() {
+    # Analiza primero la raíz misma
+    analizar_carpeta "$CARPETA_BASE"
+
+    # Luego, todas las subcarpetas
+    while IFS= read -r -d '' carpeta; do
+        analizar_carpeta "$carpeta"
+    done < <(find "$CARPETA_BASE" -mindepth 1 -type d -print0 2>/dev/null)
+}
+
+# ==============================
+# Generar reporte
+# ==============================
 generar_reporte() {
     local duracion=$1
     local separador=$(printf '=%.0s' {1..90})
@@ -119,14 +126,12 @@ generar_reporte() {
             echo "   Archivos totales  : ${carpetas_data[$carpeta,archivos]}"
             printf "   Peso total (MB)   : %'.2f\n" "${carpetas_data[$carpeta,peso]}"
             echo "   Tipos de archivo  :"
-
             for key in "${!carpetas_data[@]}"; do
                 if [[ $key == "$carpeta,tipo,"* ]]; then
                     ext="${key#$carpeta,tipo,}"
                     printf "      - %-15s %s archivo(s)\n" "$ext" "${carpetas_data[$key]}"
                 fi
             done | sort
-
             echo "$(printf -- '-%.0s' {1..90})"
         done
 
@@ -142,9 +147,9 @@ generar_reporte() {
     echo -e "${CYAN}Resumen guardado en: $ARCHIVO_SALIDA${RESET}"
 }
 
-# ===============================
+# ==============================
 # EJECUCIÓN PRINCIPAL
-# ===============================
+# ==============================
 echo -e "${YELLOW}Iniciando análisis de: $CARPETA_BASE${RESET}"
 echo ""
 
@@ -156,14 +161,14 @@ fi
 inicio=$(date +%s.%N)
 
 analizar_carpetas &
-analizar_pid=$!
-spinner $analizar_pid
-wait $analizar_pid
+pid=$!
+spinner $pid
+wait $pid
 
 fin=$(date +%s.%N)
 duracion=$(echo "$fin - $inicio" | bc)
 
-if [ "$total_carpetas" -gt 0 ]; then
+if [ "$total_archivos_global" -gt 0 ]; then
     generar_reporte "$duracion"
 else
     echo "No se encontraron archivos en la carpeta especificada."
